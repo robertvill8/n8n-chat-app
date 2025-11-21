@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Send, Bot, User, Loader2 } from 'lucide-react';
+import { Send, Bot, User, Loader2, Upload, File, X } from 'lucide-react';
 
 export default function N8NChat() {
   const [messages, setMessages] = useState([]);
@@ -7,7 +7,9 @@ export default function N8NChat() {
   const [isLoading, setIsLoading] = useState(false);
   const [webhookUrl, setWebhookUrl] = useState('');
   const [sessionId] = useState(() => `session_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`);
+  const [uploadedFile, setUploadedFile] = useState(null);
   const messagesEndRef = useRef(null);
+  const fileInputRef = useRef(null);
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -17,22 +19,71 @@ export default function N8NChat() {
     scrollToBottom();
   }, [messages]);
 
+  const handleFileSelect = (e) => {
+    const file = e.target.files[0];
+    if (file) {
+      // Prüfe Dateityp
+      const validTypes = ['application/pdf', 'image/png', 'image/jpeg', 'image/jpg'];
+      if (!validTypes.includes(file.type)) {
+        alert('Bitte nur PDF, PNG oder JPG Dateien hochladen!');
+        return;
+      }
+      
+      // Prüfe Dateigröße (max 5MB)
+      if (file.size > 5 * 1024 * 1024) {
+        alert('Datei ist zu groß! Maximal 5MB erlaubt.');
+        return;
+      }
+
+      setUploadedFile(file);
+    }
+  };
+
+  const removeFile = () => {
+    setUploadedFile(null);
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
+  };
+
   const sendMessage = async () => {
-    if (!input.trim() || !webhookUrl.trim()) return;
+    if ((!input.trim() && !uploadedFile) || !webhookUrl.trim()) return;
 
     const userMessage = {
       id: Date.now(),
-      text: input,
+      text: input || (uploadedFile ? `[Datei hochgeladen: ${uploadedFile.name}]` : ''),
       sender: 'user',
-      timestamp: new Date().toISOString()
+      timestamp: new Date().toISOString(),
+      file: uploadedFile ? { name: uploadedFile.name, type: uploadedFile.type } : null
     };
 
     setMessages(prev => [...prev, userMessage]);
     const currentInput = input;
+    const currentFile = uploadedFile;
     setInput('');
+    setUploadedFile(null);
     setIsLoading(true);
 
     try {
+      let fileData = null;
+      
+      // Datei zu Base64 konvertieren wenn vorhanden
+      if (currentFile) {
+        fileData = await new Promise((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => {
+            const base64 = reader.result.split(',')[1];
+            resolve({
+              name: currentFile.name,
+              type: currentFile.type,
+              data: base64
+            });
+          };
+          reader.onerror = reject;
+          reader.readAsDataURL(currentFile);
+        });
+      }
+
       const response = await fetch(webhookUrl, {
         method: 'POST',
         headers: {
@@ -41,7 +92,8 @@ export default function N8NChat() {
         body: JSON.stringify({
           message: currentInput,
           sessionId: sessionId,
-          timestamp: new Date().toISOString()
+          timestamp: new Date().toISOString(),
+          file: fileData
         })
       });
 
@@ -70,6 +122,9 @@ export default function N8NChat() {
       setMessages(prev => [...prev, errorMessage]);
     } finally {
       setIsLoading(false);
+      if (fileInputRef.current) {
+        fileInputRef.current.value = '';
+      }
     }
   };
 
@@ -87,8 +142,9 @@ export default function N8NChat() {
         <div className="max-w-4xl mx-auto">
           <h1 className="text-2xl font-bold text-white flex items-center gap-2">
             <Bot className="w-8 h-8 text-blue-400" />
-            N8N AI Agent Chat
+            Rechnungs-Assistent
           </h1>
+          <p className="text-sm text-slate-400 mt-1">PDF/Bild hochladen & Fragen stellen</p>
           <div className="mt-3">
             <input
               type="text"
@@ -107,8 +163,8 @@ export default function N8NChat() {
           {messages.length === 0 && (
             <div className="text-center text-slate-400 mt-20">
               <Bot className="w-16 h-16 mx-auto mb-4 opacity-50" />
-              <p className="text-lg">Starte eine Konversation mit dem AI Agent</p>
-              <p className="text-sm mt-2">Gib zuerst deine N8N Webhook-URL oben ein</p>
+              <p className="text-lg">Lade eine Rechnung hoch oder stelle eine Frage</p>
+              <p className="text-sm mt-2">Unterstützte Formate: PDF, PNG, JPG (max. 5MB)</p>
             </div>
           )}
           
@@ -132,6 +188,12 @@ export default function N8NChat() {
                     : 'bg-slate-700/50 text-white rounded-bl-none backdrop-blur-sm'
                 }`}
               >
+                {msg.file && (
+                  <div className="flex items-center gap-2 mb-2 pb-2 border-b border-slate-600">
+                    <File className="w-4 h-4" />
+                    <span className="text-xs opacity-75">{msg.file.name}</span>
+                  </div>
+                )}
                 <p className="whitespace-pre-wrap break-words">{msg.text}</p>
                 <p className="text-xs mt-1 opacity-60">
                   {new Date(msg.timestamp).toLocaleTimeString('de-DE', { 
@@ -167,19 +229,53 @@ export default function N8NChat() {
       {/* Input Area */}
       <div className="bg-slate-800/50 backdrop-blur-sm border-t border-slate-700 p-4">
         <div className="max-w-4xl mx-auto">
+          {/* File Upload Preview */}
+          {uploadedFile && (
+            <div className="mb-2 flex items-center gap-2 bg-slate-700/50 px-3 py-2 rounded-lg">
+              <File className="w-5 h-5 text-blue-400" />
+              <span className="text-sm text-white flex-1">{uploadedFile.name}</span>
+              <button
+                onClick={removeFile}
+                className="text-slate-400 hover:text-red-400 transition-colors"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+          )}
+          
           <div className="flex gap-2">
+            {/* File Upload Button */}
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept=".pdf,.png,.jpg,.jpeg"
+              onChange={handleFileSelect}
+              className="hidden"
+            />
+            <button
+              onClick={() => fileInputRef.current?.click()}
+              disabled={!webhookUrl.trim() || isLoading}
+              className="px-4 py-3 bg-slate-700 hover:bg-slate-600 disabled:bg-slate-800 disabled:cursor-not-allowed text-white rounded-xl transition-colors flex items-center gap-2"
+              title="Datei hochladen (PDF, PNG, JPG)"
+            >
+              <Upload className="w-5 h-5" />
+            </button>
+
+            {/* Message Input */}
             <input
               type="text"
               value={input}
               onChange={(e) => setInput(e.target.value)}
               onKeyPress={handleKeyPress}
-              placeholder="Nachricht eingeben..."
+              placeholder="Nachricht oder Frage zur Rechnung..."
               disabled={!webhookUrl.trim() || isLoading}
               className="flex-1 px-4 py-3 bg-slate-700/50 border border-slate-600 rounded-xl text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent disabled:opacity-50 disabled:cursor-not-allowed"
             />
+
+            {/* Send Button */}
             <button
               onClick={sendMessage}
-              disabled={!input.trim() || !webhookUrl.trim() || isLoading}
+              disabled={(!input.trim() && !uploadedFile) || !webhookUrl.trim() || isLoading}
               className="px-6 py-3 bg-blue-600 hover:bg-blue-700 disabled:bg-slate-600 disabled:cursor-not-allowed text-white rounded-xl font-medium transition-colors flex items-center gap-2"
             >
               {isLoading ? (
